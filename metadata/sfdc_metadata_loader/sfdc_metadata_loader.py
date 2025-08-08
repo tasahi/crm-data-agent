@@ -15,7 +15,6 @@
 
 import json
 import pathlib
-import threading
 import typing
 
 from urllib.parse import unquote, urlparse, parse_qs
@@ -37,10 +36,11 @@ _system_fields_description_formats = {
 
 _extra_descriptions_path = "sfdc_extra_descriptions.json"
 
-from .sfdc_metadata import SFDCMetadata
+from ..base_metadata import BaseMetadataBuilder
 
-class SFDCMetadataBuilder(SFDCMetadata):
-    """Salesforce CRM metadata extractor"""
+
+class SFDCMetadataBuilder(BaseMetadataBuilder):
+    """Salesforce CRM metadata builder."""
 
     def __init__(
         self,
@@ -103,8 +103,8 @@ class SFDCMetadataBuilder(SFDCMetadata):
                                     names to SFDC object names.
         """
         super().__init__(project_id, dataset_name, metadata_file)
-        self.bq_client = bq_client
         self.table_to_object_mapping = table_to_object_mapping
+        self.bq_client = bq_client
 
         if isinstance(sfdc_auth_parameters, str):
             # sfdc_auth_parameters is a path to a Secret Manager secret
@@ -158,31 +158,12 @@ class SFDCMetadataBuilder(SFDCMetadata):
 
         # auth_dict["version"] = "61.0"
         self.sfdc_connection = Salesforce(**auth_dict)  # type: ignore
-        self._metadata = {}
-        self._lock = threading.Lock()
 
-    def get_metadata(self) -> typing.Dict[str, typing.Any]:
-        """Extract metadata from Salesforce CRM"""
-        if len(self._metadata) > 0:
-            return self._metadata
 
-        with self._lock:
-            if len(self._metadata) == 0:
-                metadata_path = pathlib.Path(self._metadata_file_name)
-                if metadata_path.exists():
-                    self._metadata = json.loads(
-                        metadata_path.read_text(encoding="utf-8"))
-                else:
-                    self._extract_metadata()
-                    self._enhance_metadata()
-                    metadata_path.write_text(json.dumps(
-                        self._metadata, indent=2))
-        return self._metadata
-
-    def _enhance_metadata(self) -> bool:
+    def _enhance_metadata(self) -> None:
         file_path = pathlib.Path(__file__).parent / pathlib.Path(_extra_descriptions_path)
         if not file_path.exists():
-            return False
+            return
         extra_dict = json.loads(file_path.read_text(encoding="utf-8"))
         for k in self._metadata.keys():
             if k not in extra_dict:
@@ -192,9 +173,8 @@ class SFDCMetadataBuilder(SFDCMetadata):
             for fk in columns.keys():
                 if fk in extra_cols:
                     columns[fk]["sfdc_description"] = extra_cols[fk]
-        return True
 
-    def _extract_metadata(self) -> bool:
+    def _extract_metadata(self) -> None:
         dataset = self.bq_client.get_dataset(self.dataset_name)
         tables = []
         tables_light = list(self.bq_client.list_tables(dataset))
@@ -317,4 +297,3 @@ class SFDCMetadataBuilder(SFDCMetadata):
             table_metadata.pop("salesforce_fields")
             table_metadata.pop("bq_table")
         self._metadata = table_metadatas
-        return True
